@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compatibleIntents, Intent } from "@/lib/intent";
 
@@ -23,9 +24,12 @@ const INTENT_LABELS: Record<Intent, string> = {
 };
 
 export default function BarPage() {
+  const router = useRouter();
   const [patrons, setPatrons] = useState<Patron[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [venueId, setVenueId] = useState<string | null>(null);
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     async function loadPatrons() {
@@ -58,6 +62,7 @@ export default function BarPage() {
         return;
       }
 
+      setVenueId(myPresence.venue_id);
       const myIntent = myPresence.intent as Intent;
       const compatible = compatibleIntents(myIntent);
 
@@ -92,6 +97,59 @@ export default function BarPage() {
 
     loadPatrons();
   }, []);
+
+  // Subscribe to matches table — navigate on new match
+  useEffect(() => {
+    if (!supabase) return;
+    const profileId = localStorage.getItem("barchat_profile_id");
+    if (!profileId) return;
+
+    const channel = supabase
+      .channel("matches-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "matches",
+          filter: `profile_a=eq.${profileId}`,
+        },
+        (payload) => {
+          router.push(`/match/${payload.new.id}`);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "matches",
+          filter: `profile_b=eq.${profileId}`,
+        },
+        (payload) => {
+          router.push(`/match/${payload.new.id}`);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [router]);
+
+  async function handleLike(toProfileId: string) {
+    if (!supabase || !venueId) return;
+    const profileId = localStorage.getItem("barchat_profile_id");
+    if (!profileId) return;
+
+    setLikedIds((prev) => new Set(prev).add(toProfileId));
+
+    await supabase.from("likes").insert({
+      from_profile: profileId,
+      to_profile: toProfileId,
+      venue_id: venueId,
+    });
+  }
 
   if (loading) {
     return (
@@ -158,12 +216,15 @@ export default function BarPage() {
 
               {/* Like button */}
               <button
-                className="w-full py-2 rounded-xl bg-pink-600 hover:bg-pink-500 active:bg-pink-700 font-medium transition-colors"
-                onClick={() => {
-                  // Not wired up yet
-                }}
+                className={`w-full py-2 rounded-xl font-medium transition-colors ${
+                  likedIds.has(patron.profile_id)
+                    ? "bg-gray-700 text-gray-400 cursor-default"
+                    : "bg-pink-600 hover:bg-pink-500 active:bg-pink-700"
+                }`}
+                disabled={likedIds.has(patron.profile_id)}
+                onClick={() => handleLike(patron.profile_id)}
               >
-                Like 💜
+                {likedIds.has(patron.profile_id) ? "Liked ✓" : "Like 💜"}
               </button>
             </div>
           ))}
