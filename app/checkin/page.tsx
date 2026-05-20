@@ -47,9 +47,11 @@ function CheckinForm() {
         .from("venues")
         .select("id, name")
         .eq("qr_slug", venueSlug)
-        .single();
+        .maybeSingle();
 
-      if (fetchError || !data) {
+      if (fetchError) {
+        setError("Could not connect to the venue database.");
+      } else if (!data) {
         setError("Venue not found. Check the QR code and try again.");
       } else {
         setVenue(data);
