@@ -23,6 +23,27 @@ const INTENT_LABELS: Record<Intent, string> = {
   serious: "❤️ Serious",
 };
 
+/**
+ * Fires a non-awaited POST to /api/icebreaker. The match page will pick up
+ * the icebreaker via realtime when the server writes it. Errors are swallowed
+ * so the redirect path on /bar never raises an unhandled promise rejection.
+ *
+ * Requirements: 5.1, 5.4
+ */
+function fireWingman(matchId: string): void {
+  fetch("/api/icebreaker", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ match_id: matchId }),
+    // keepalive lets the request outlive the immediate router.push navigation
+    // away from /bar. Without it, the browser cancels the in-flight fetch
+    // when the page unloads and the icebreaker never gets generated.
+    keepalive: true,
+  }).catch(() => {
+    // Intentionally swallowed — fire-and-forget per Req 5.4.
+  });
+}
+
 export default function BarPage() {
   const router = useRouter();
   const [patrons, setPatrons] = useState<Patron[]>([]);
@@ -101,10 +122,11 @@ export default function BarPage() {
   // Subscribe to matches table — navigate on new match
   useEffect(() => {
     if (!supabase) return;
+    const client = supabase;
     const profileId = localStorage.getItem("barchat_profile_id");
     if (!profileId) return;
 
-    const channel = supabase
+    const channel = client
       .channel("matches-realtime")
       .on(
         "postgres_changes",
@@ -115,6 +137,7 @@ export default function BarPage() {
           filter: `profile_a=eq.${profileId}`,
         },
         (payload) => {
+          fireWingman(payload.new.id);
           router.push(`/match/${payload.new.id}`);
         }
       )
@@ -127,13 +150,14 @@ export default function BarPage() {
           filter: `profile_b=eq.${profileId}`,
         },
         (payload) => {
+          fireWingman(payload.new.id);
           router.push(`/match/${payload.new.id}`);
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      client.removeChannel(channel);
     };
   }, [router]);
 

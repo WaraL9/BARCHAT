@@ -164,6 +164,9 @@ export function useMatchRealtime(matchId: string): UseMatchRealtimeResult {
                 ...prev,
                 expires_at: payload.new.expires_at ?? prev.expires_at,
                 met_at: payload.new.met_at ?? prev.met_at,
+                icebreaker: payload.new.icebreaker ?? prev.icebreaker,
+                icebreaker_tip:
+                  payload.new.icebreaker_tip ?? prev.icebreaker_tip,
               };
             });
           }
