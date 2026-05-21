@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compatibleIntents, Intent } from "@/lib/intent";
+import SkeletonCard from "./SkeletonCard";
 
 interface Patron {
   profile_id: string;
@@ -21,6 +22,14 @@ const INTENT_LABELS: Record<Intent, string> = {
   language_exchange: "🗣️ Language Exchange",
   new_in_town: "🌏 New in Town",
   serious: "❤️ Serious",
+};
+
+const INTENT_COLORS: Record<Intent, string> = {
+  drink_buddy: "bg-amber-500/20 text-amber-300 border border-amber-500/30",
+  casual_date: "bg-pink-500/20 text-pink-300 border border-pink-500/30",
+  language_exchange: "bg-blue-500/20 text-blue-300 border border-blue-500/30",
+  new_in_town: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
+  serious: "bg-purple-500/20 text-purple-300 border border-purple-500/30",
 };
 
 /**
@@ -51,6 +60,7 @@ export default function BarPage() {
   const [error, setError] = useState<string | null>(null);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [likingId, setLikingId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadPatrons() {
@@ -166,19 +176,30 @@ export default function BarPage() {
     const profileId = localStorage.getItem("barchat_profile_id");
     if (!profileId) return;
 
-    setLikedIds((prev) => new Set(prev).add(toProfileId));
+    setLikingId(toProfileId);
 
-    await supabase.from("likes").insert({
-      from_profile: profileId,
-      to_profile: toProfileId,
-      venue_id: venueId,
-    });
+    try {
+      await supabase.from("likes").insert({
+        from_profile: profileId,
+        to_profile: toProfileId,
+        venue_id: venueId,
+      });
+
+      setLikedIds((prev) => new Set(prev).add(toProfileId));
+    } finally {
+      setLikingId(null);
+    }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
-        <p className="text-lg animate-pulse">Loading bar floor…</p>
+      <div className="min-h-screen bg-gray-950 text-white px-4 py-6">
+        <h1 className="text-2xl font-bold mb-6 text-center">Who&apos;s Here</h1>
+        <div className="grid gap-4 max-w-md mx-auto">
+          {[1, 2, 3].map((i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -227,12 +248,10 @@ export default function BarPage() {
                       <span className="text-gray-400 text-sm">{patron.age}</span>
                     )}
                     {patron.is_verified_patron && (
-                      <span className="text-blue-400 text-sm" title="Verified Patron">
-                        ✓
-                      </span>
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-500 text-white text-xs font-bold" aria-label="Verified">✓</span>
                     )}
                   </div>
-                  <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-300">
+                  <span className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full ${INTENT_COLORS[patron.intent]}`}>
                     {INTENT_LABELS[patron.intent]}
                   </span>
                 </div>
@@ -240,15 +259,29 @@ export default function BarPage() {
 
               {/* Like button */}
               <button
-                className={`w-full py-2 rounded-xl font-medium transition-colors ${
+                className={`w-full py-2 rounded-xl font-medium transition-colors flex items-center justify-center gap-2 ${
                   likedIds.has(patron.profile_id)
                     ? "bg-gray-700 text-gray-400 cursor-default"
+                    : likingId === patron.profile_id
+                    ? "bg-pink-600/70 text-pink-200 cursor-wait"
                     : "bg-pink-600 hover:bg-pink-500 active:bg-pink-700"
                 }`}
-                disabled={likedIds.has(patron.profile_id)}
+                disabled={likedIds.has(patron.profile_id) || likingId === patron.profile_id}
                 onClick={() => handleLike(patron.profile_id)}
               >
-                {likedIds.has(patron.profile_id) ? "Liked ✓" : "Like 💜"}
+                {likingId === patron.profile_id ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Liking…
+                  </>
+                ) : likedIds.has(patron.profile_id) ? (
+                  "Liked ✓"
+                ) : (
+                  "Like 💜"
+                )}
               </button>
             </div>
           ))}

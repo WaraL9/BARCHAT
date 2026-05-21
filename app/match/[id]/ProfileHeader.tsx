@@ -71,10 +71,10 @@ function ProfileCard({
         <img
           src={profile.photo_url}
           alt={profile.display_name}
-          className="w-16 h-16 rounded-full object-cover border-2 border-white/20"
+          className="w-20 h-20 rounded-full object-cover border-2 border-white/20"
         />
       ) : (
-        <div className="w-16 h-16 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center">
+        <div className="w-20 h-20 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center">
           <span className="text-lg font-semibold text-white/70">
             {getInitials(profile.display_name)}
           </span>

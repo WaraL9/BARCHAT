@@ -4,12 +4,17 @@ import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { useMatchRealtime } from "./useMatchRealtime";
 import { useChatRealtime } from "./useChatRealtime";
+import { useMatchDrinks } from "./useMatchDrinks";
+import { DRINK_CATALOG, type DrinkKind } from "./drinkCatalog";
+import { encodeDrinkMessage } from "./drinkMessageCodec";
+import { supabase } from "@/lib/supabase";
 import ProfileHeader from "./ProfileHeader";
 import CountdownTimer from "./CountdownTimer";
 import MetButton from "./MetButton";
 import WingmanCard from "./WingmanCard";
 import ChatRegion from "./ChatRegion";
 import ChatInputBar from "./ChatInputBar";
+import DrinkPanel from "./DrinkPanel";
 import { computeTimerState } from "./utils";
 
 /**
@@ -39,6 +44,11 @@ export default function MatchPage() {
 
   const { match, profiles, presences, loading, error } =
     useMatchRealtime(matchId);
+
+  // Wingman visibility state (Req 9.2, 9.3). When the user dismisses the
+  // wingman card via the close button, the card is removed from the DOM
+  // entirely so the layout reclaims the space without a layout jump.
+  const [wingmanVisible, setWingmanVisible] = useState(true);
 
   // Chat draft slot — populated by the WingmanCard "Use this" button (Req 8.1).
   // Task 6.1 stubbed this as `string | null`; task 6.2 promotes it to a real
@@ -79,6 +89,17 @@ export default function MatchPage() {
     clearSendError,
     sendText,
   } = useChatRealtime(matchId);
+
+  // Drinks hook — realtime drink state for this match (Req 11.1, 12.x).
+  const { drinksMap } = useMatchDrinks(matchId);
+
+  // Drink-send in-flight guard (Req 3.3)
+  const [drinkSending, setDrinkSending] = useState(false);
+  const [drinkSendError, setDrinkSendError] = useState<string | null>(null);
+
+  // Redeem in-flight guard (Req 9.3)
+  const [redeemingId, setRedeemingId] = useState<string | null>(null);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
 
   // 1-second ticker that drives the `matchEnded` derivation (Req 6.5). The
   // realtime UPDATEs from `useMatchRealtime` already re-render the page when
@@ -140,6 +161,76 @@ export default function MatchPage() {
     clearSendError();
     if (lastSentRef.current.length === 0) return;
     await sendText(lastSentRef.current, currentUserId);
+  };
+
+  // Redeem flow (Req 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 13.2).
+  // Two-step: update drink to redeemed, then insert redeem confirmation message.
+  const handleRedeem = async (drinkId: string) => {
+    if (!supabase) return;
+    if (redeemingId) return; // Req 9.3: ignore while in-flight
+
+    // Req 13.2: defensive guard — only the recipient can redeem
+    const drink = drinksMap.get(drinkId);
+    if (!drink || drink.to_profile !== currentUserId) return;
+    // Req 9.2: only update pending drinks
+    if (drink.status !== "pending") return;
+
+    setRedeemingId(drinkId);
+    setRedeemError(null);
+
+    // Step 1: Update drink row with conditional .eq("status", "pending") to prevent double-redeem (Req 9.1, 9.2)
+    const { error: updateError } = await supabase
+      .from("drinks")
+      .update({ status: "redeemed", redeemed_at: new Date().toISOString() })
+      .eq("id", drinkId)
+      .eq("status", "pending");
+
+    if (updateError) {
+      // Req 9.4: show error, do NOT insert message
+      setRedeemError("Couldn't redeem. Tap to retry.");
+      setRedeemingId(null);
+      return;
+    }
+
+    // Step 2: Insert redeem confirmation message (Req 10.1, 10.3, 10.4)
+    // Resolve redeemer name (current user) and sender name from profiles
+    const redeemerName =
+      match!.profile_a === currentUserId
+        ? profiles.a?.display_name ?? "Someone"
+        : profiles.b?.display_name ?? "Someone";
+
+    const senderName =
+      drink.from_profile === match!.profile_a
+        ? profiles.a?.display_name ?? "Someone"
+        : profiles.b?.display_name ?? "Someone";
+
+    const content = encodeDrinkMessage({
+      v: 1,
+      type: "redeem",
+      drink_id: drinkId,
+      drink_type: drink.drink_type,
+      price_thb: drink.price_thb,
+      sender_name: senderName,
+      recipient_name: redeemerName,
+    });
+
+    const { error: msgError } = await supabase
+      .from("messages")
+      .insert({
+        match_id: matchId,
+        sender_id: currentUserId,
+        kind: "system_drink",
+        content,
+      })
+      .select("id")
+      .single();
+
+    if (msgError) {
+      // Req 10.2: drink stays redeemed; show specific error
+      setRedeemError("Redeemed, but couldn't post confirmation. Tap to retry.");
+    }
+
+    setRedeemingId(null);
   };
 
   // Defensive re-fire of the wingman call. The /bar page already fires this
@@ -233,6 +324,9 @@ export default function MatchPage() {
   const matchEnded =
     match.met_at !== null || Date.parse(match.expires_at) <= Date.now();
 
+  // DrinkPanel disabled = matchEnded || supabase is null (Req 6.4)
+  const drinkPanelDisabled = matchEnded || !supabase;
+
   // Wingman "Use this" handler (Req 8.1, 8.2, 8.3, 8.4). Writes the
   // icebreaker into `Chat_Draft` (Req 8.1) — the controlled binding from
   // Req 6.2 then propagates the value into `ChatInputBar` automatically
@@ -252,6 +346,98 @@ export default function MatchPage() {
     if (chatInputRef.current && !matchEnded) {
       chatInputRef.current.focus();
     }
+  };
+
+  // Drink send flow (Req 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4, 6.2).
+  // Two-step sequential insert: drink row first, then system_drink message.
+  // Guards: abort if matchEnded, ignore if drinkSending already true, abort
+  // if supabase is null. Re-checks matchEnded right before the first insert
+  // so a race between the user tap and the match ending doesn't produce a
+  // stale drink row.
+  const handleSendDrink = async (kind: DrinkKind) => {
+    if (matchEnded) return; // Req 6.2: abort if match ended
+    if (!supabase) {
+      setDrinkSendError("Couldn't send drink. Tap to retry.");
+      return;
+    }
+    if (drinkSending) return; // Req 3.3: ignore while in-flight
+
+    setDrinkSending(true);
+    setDrinkSendError(null);
+
+    // Re-check matchEnded right before insert (Req 6.2)
+    const nowEnded =
+      match!.met_at !== null || Date.parse(match!.expires_at) <= Date.now();
+    if (nowEnded) {
+      setDrinkSending(false);
+      return;
+    }
+
+    const catalogEntry = DRINK_CATALOG[kind];
+    const otherUserId =
+      match!.profile_a === currentUserId
+        ? match!.profile_b
+        : match!.profile_a;
+
+    // Step 1: Insert drink row (Req 3.1, 3.2)
+    const { data: drinkData, error: drinkError } = await supabase
+      .from("drinks")
+      .insert({
+        match_id: matchId,
+        from_profile: currentUserId,
+        to_profile: otherUserId,
+        drink_type: kind,
+        price_thb: catalogEntry.price_thb,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (drinkError || !drinkData) {
+      // Req 3.4: no message insert on drink failure
+      setDrinkSendError("Couldn't send drink. Tap to retry.");
+      setDrinkSending(false);
+      return;
+    }
+
+    // Step 2: Insert system_drink message (Req 4.1, 4.2, 4.3)
+    // Resolve display names from profiles (already loaded by useMatchRealtime)
+    const senderName =
+      match!.profile_a === currentUserId
+        ? profiles.a?.display_name ?? "Someone"
+        : profiles.b?.display_name ?? "Someone";
+    const recipientName =
+      match!.profile_a === otherUserId
+        ? profiles.a?.display_name ?? "Someone"
+        : profiles.b?.display_name ?? "Someone";
+
+    const content = encodeDrinkMessage({
+      v: 1,
+      type: "send",
+      drink_id: drinkData.id,
+      drink_type: kind,
+      price_thb: catalogEntry.price_thb,
+      sender_name: senderName,
+      recipient_name: recipientName,
+    });
+
+    const { error: msgError } = await supabase
+      .from("messages")
+      .insert({
+        match_id: matchId,
+        sender_id: currentUserId,
+        kind: "system_drink",
+        content,
+      })
+      .select("id")
+      .single();
+
+    if (msgError) {
+      // Req 4.4: drink row stays; show error
+      setDrinkSendError("Couldn't send drink. Tap to retry.");
+    }
+
+    setDrinkSending(false);
   };
 
   // Layout (Req 1.1, 1.3, 1.4, 6.1):
@@ -277,12 +463,15 @@ export default function MatchPage() {
         {/* Countdown Timer — natural height, no flex-1 wrapper (Req 6.1 ordering) */}
         <CountdownTimer expiresAt={match.expires_at} metAt={match.met_at} />
 
-        {/* Wingman icebreaker card between the countdown and the chat region (Req 6.4) */}
-        <WingmanCard
-          icebreaker={match.icebreaker}
-          tip={match.icebreaker_tip}
-          onUseThis={handleUseThis}
-        />
+        {/* Wingman icebreaker card between the countdown and the chat region (Req 6.4, 9.2, 9.3) */}
+        {wingmanVisible && (
+          <WingmanCard
+            icebreaker={match.icebreaker}
+            tip={match.icebreaker_tip}
+            onUseThis={handleUseThis}
+            onClose={() => setWingmanVisible(false)}
+          />
+        )}
 
         {/*
           Chat region wired to `useChatRealtime` (Req 1.1, 1.5, 2.x, 3.x,
@@ -297,6 +486,10 @@ export default function MatchPage() {
           currentUserId={currentUserId}
           sendError={sendError}
           onRetry={onRetry}
+          drinksMap={drinksMap}
+          onRedeem={handleRedeem}
+          redeemingId={redeemingId}
+          redeemError={redeemError}
         />
         {/*
           Chat input is fully controlled (Req 6.2, 6.3) and disabled by the
@@ -312,6 +505,14 @@ export default function MatchPage() {
           onChange={setChatDraft}
           onSend={handleSend}
           disabled={matchEnded}
+        />
+
+        {/* Drink panel between ChatInputBar and MetButton (Req 1.1, 1.4) */}
+        <DrinkPanel
+          disabled={drinkPanelDisabled}
+          sending={drinkSending}
+          sendError={drinkSendError}
+          onSendDrink={handleSendDrink}
         />
       </div>
 

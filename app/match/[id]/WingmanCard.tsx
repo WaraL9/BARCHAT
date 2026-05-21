@@ -4,6 +4,7 @@ interface WingmanCardProps {
   icebreaker: string | null;
   tip: string | null;
   onUseThis: (text: string) => void;
+  onClose?: () => void;
 }
 
 /**
@@ -23,6 +24,7 @@ export default function WingmanCard({
   icebreaker,
   tip,
   onUseThis,
+  onClose,
 }: WingmanCardProps) {
   const isReady = icebreaker !== null && icebreaker.length > 0;
   const showTip = isReady && tip !== null && tip.length > 0;
@@ -35,7 +37,17 @@ export default function WingmanCard({
   };
 
   return (
-    <div className="mx-4 my-3 rounded-2xl bg-white/5 border border-white/10 p-4">
+    <div className="relative mx-4 my-3 rounded-2xl bg-violet-100/10 border border-violet-300/20 p-4">
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close wingman"
+          className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center text-white/50 hover:text-white/80 transition-colors"
+        >
+          ×
+        </button>
+      )}
       <div className="text-xs uppercase tracking-wider text-white/40 mb-2">
         Wingman
       </div>
@@ -47,7 +59,7 @@ export default function WingmanCard({
         </p>
       ) : (
         <p className="text-base italic text-white/60 leading-relaxed animate-pulse">
-          Wingman is thinking…
+          Loading wingman...
         </p>
       )}
 

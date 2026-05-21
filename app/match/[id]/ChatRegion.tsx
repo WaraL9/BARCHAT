@@ -3,6 +3,8 @@
 import { forwardRef } from "react";
 import MessageBubble from "./MessageBubble";
 import SystemDrinkRow from "./SystemDrinkRow";
+import { decodeDrinkMessage } from "./drinkMessageCodec";
+import type { DrinkRow } from "./drinkCatalog";
 import type { ChatStatus, MessageRow } from "./useChatRealtime";
 
 /**
@@ -19,6 +21,14 @@ export interface ChatRegionProps {
   sendError: string | null;
   /** Click handler attached to the inline error pill to allow retry. */
   onRetry?: () => void;
+  /** Drink state map from useMatchDrinks, keyed by drink id. */
+  drinksMap?: Map<string, DrinkRow>;
+  /** Called when user taps "Redeem at counter" on a drink message. */
+  onRedeem?: (drinkId: string) => void;
+  /** The drink id currently being redeemed (in-flight guard). */
+  redeemingId?: string | null;
+  /** Inline redeem error keyed to a specific drink id. */
+  redeemError?: string | null;
 }
 
 /**
@@ -54,7 +64,7 @@ export interface ChatRegionProps {
  */
 const ChatRegion = forwardRef<HTMLDivElement, ChatRegionProps>(
   function ChatRegion(
-    { messages, status, currentUserId, sendError, onRetry },
+    { messages, status, currentUserId, sendError, onRetry, drinksMap, onRedeem, redeemingId, redeemError },
     ref,
   ) {
     const isEmpty = messages.length === 0;
@@ -94,7 +104,21 @@ const ChatRegion = forwardRef<HTMLDivElement, ChatRegionProps>(
             );
           }
           // kind === "system_drink"
-          return <SystemDrinkRow key={m.id} content={m.content} />;
+          const payload = decodeDrinkMessage(m.content);
+          const linkedDrink = payload ? drinksMap?.get(payload.drink_id) : undefined;
+          return (
+            <SystemDrinkRow
+              key={m.id}
+              content={m.content}
+              drink={linkedDrink}
+              currentUserId={currentUserId}
+              onRedeem={onRedeem}
+              redeemingId={redeemingId}
+              redeemError={
+                redeemError && linkedDrink?.id === redeemingId ? redeemError : null
+              }
+            />
+          );
         })}
 
         {sendError !== null && (

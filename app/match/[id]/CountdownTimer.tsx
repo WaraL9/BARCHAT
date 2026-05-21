@@ -58,7 +58,7 @@ export default function CountdownTimer({ expiresAt, metAt }: CountdownTimerProps
   return (
     <div className="flex flex-col items-center justify-center py-8">
       <p
-        className={`font-mono text-7xl sm:text-8xl md:text-9xl font-bold tracking-tight ${digitClasses}`}
+        className={`font-mono text-[min(8rem,18vw)] font-bold tracking-tight tabular-nums leading-none ${digitClasses}`}
       >
         {formatTime(remainingSeconds)}
       </p>
