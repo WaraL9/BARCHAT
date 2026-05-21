@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { compatibleIntents, Intent } from "@/lib/intent";
 import SkeletonCard from "./SkeletonCard";
+import BarHeader from "./BarHeader";
+import MatchOverlay from "./MatchOverlay";
 
 interface Patron {
   profile_id: string;
@@ -44,9 +47,6 @@ function fireWingman(matchId: string): void {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ match_id: matchId }),
-    // keepalive lets the request outlive the immediate router.push navigation
-    // away from /bar. Without it, the browser cancels the in-flight fetch
-    // when the page unloads and the icebreaker never gets generated.
     keepalive: true,
   }).catch(() => {
     // Intentionally swallowed — fire-and-forget per Req 5.4.
@@ -58,83 +58,149 @@ export default function BarPage() {
   const [patrons, setPatrons] = useState<Patron[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRetryFailure, setIsRetryFailure] = useState(false);
   const [venueId, setVenueId] = useState<string | null>(null);
+  const [venueName, setVenueName] = useState<string | null>(null);
+  const [myDisplayName, setMyDisplayName] = useState<string | null>(null);
+  const [myIntent, setMyIntent] = useState<Intent | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [likingId, setLikingId] = useState<string | null>(null);
+  const [matchOverlay, setMatchOverlay] = useState<{
+    matchId: string;
+    profileA: { display_name: string; photo_url: string | null };
+    profileB: { display_name: string; photo_url: string | null };
+  } | null>(null);
 
-  useEffect(() => {
-    async function loadPatrons() {
-      if (!supabase) {
-        setError("Supabase not configured");
-        setLoading(false);
-        return;
-      }
+  const loadPatrons = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
-      const profileId = localStorage.getItem("barchat_profile_id");
-      if (!profileId) {
-        setError("Not checked in. Please scan a venue QR code first.");
-        setLoading(false);
-        return;
-      }
-
-      // Find my current presence (most recent with no checkout)
-      const { data: myPresence, error: presenceError } = await supabase
-        .from("presence")
-        .select("venue_id, intent")
-        .eq("profile_id", profileId)
-        .is("checked_out_at", null)
-        .order("checked_in_at", { ascending: false })
-        .limit(1)
-        .single();
-
-      if (presenceError || !myPresence) {
-        setError("No active check-in found. Please check in at a venue first.");
-        setLoading(false);
-        return;
-      }
-
-      setVenueId(myPresence.venue_id);
-      const myIntent = myPresence.intent as Intent;
-      const compatible = compatibleIntents(myIntent);
-
-      // Query other patrons at same venue with compatible intents
-      const { data: others, error: othersError } = await supabase
-        .from("presence")
-        .select("profile_id, intent, profiles(display_name, age, photo_url, bio, is_verified_patron)")
-        .eq("venue_id", myPresence.venue_id)
-        .is("checked_out_at", null)
-        .neq("profile_id", profileId)
-        .in("intent", compatible);
-
-      if (othersError) {
-        setError("Failed to load patrons.");
-        setLoading(false);
-        return;
-      }
-
-      const mapped: Patron[] = (others || []).map((row: any) => ({
-        profile_id: row.profile_id,
-        intent: row.intent as Intent,
-        display_name: row.profiles?.display_name ?? "Unknown",
-        age: row.profiles?.age ?? null,
-        photo_url: row.profiles?.photo_url ?? null,
-        bio: row.profiles?.bio ?? null,
-        is_verified_patron: row.profiles?.is_verified_patron ?? false,
-      }));
-
-      setPatrons(mapped);
+    if (!supabase) {
+      setError("Supabase not configured");
       setLoading(false);
+      return;
     }
 
-    loadPatrons();
-  }, []);
+    const profileId = localStorage.getItem("barchat_profile_id");
+    if (!profileId) {
+      router.push("/");
+      return;
+    }
 
-  // Subscribe to matches table — navigate on new match
+    // Find my current presence (most recent with no checkout)
+    const { data: myPresence, error: presenceError } = await supabase
+      .from("presence")
+      .select("venue_id, intent")
+      .eq("profile_id", profileId)
+      .is("checked_out_at", null)
+      .order("checked_in_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (presenceError || !myPresence) {
+      setError("No active check-in found. Please check in at a venue first.");
+      setLoading(false);
+      return;
+    }
+
+    setVenueId(myPresence.venue_id);
+    const myIntentValue = myPresence.intent as Intent;
+    setMyIntent(myIntentValue);
+    const compatible = compatibleIntents(myIntentValue);
+
+    // Fetch venue name for the header
+    const { data: venueData } = await supabase
+      .from("venues")
+      .select("name")
+      .eq("id", myPresence.venue_id)
+      .single();
+
+    if (venueData) {
+      setVenueName(venueData.name);
+    }
+
+    // Fetch user's display name for the header
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("id", profileId)
+      .single();
+
+    if (profileData) {
+      setMyDisplayName(profileData.display_name);
+    }
+
+    // Query other patrons at same venue with compatible intents
+    const { data: others, error: othersError } = await supabase
+      .from("presence")
+      .select("profile_id, intent, profiles(display_name, age, photo_url, bio, is_verified_patron)")
+      .eq("venue_id", myPresence.venue_id)
+      .is("checked_out_at", null)
+      .neq("profile_id", profileId)
+      .in("intent", compatible);
+
+    if (othersError) {
+      setError("Failed to load patrons.");
+      setLoading(false);
+      return;
+    }
+
+    const mapped: Patron[] = (others || []).map((row: any) => ({
+      profile_id: row.profile_id,
+      intent: row.intent as Intent,
+      display_name: row.profiles?.display_name ?? "Unknown",
+      age: row.profiles?.age ?? null,
+      photo_url: row.profiles?.photo_url ?? null,
+      bio: row.profiles?.bio ?? null,
+      is_verified_patron: row.profiles?.is_verified_patron ?? false,
+    }));
+
+    setPatrons(mapped);
+    setLoading(false);
+  }, [router]);
+
+  useEffect(() => {
+    loadPatrons();
+  }, [loadPatrons]);
+
+  // Subscribe to matches table — show overlay then navigate on new match
   useEffect(() => {
     if (!supabase) return;
     const client = supabase;
     const profileId = localStorage.getItem("barchat_profile_id");
     if (!profileId) return;
+
+    async function handleMatchDetected(matchId: string, profileAId: string, profileBId: string) {
+      fireWingman(matchId);
+
+      // Attempt to fetch both profiles for the overlay
+      try {
+        const [resA, resB] = await Promise.all([
+          client.from("profiles").select("display_name, photo_url").eq("id", profileAId).single(),
+          client.from("profiles").select("display_name, photo_url").eq("id", profileBId).single(),
+        ]);
+
+        if (resA.data && resB.data) {
+          setMatchOverlay({
+            matchId,
+            profileA: {
+              display_name: resA.data.display_name,
+              photo_url: resA.data.photo_url,
+            },
+            profileB: {
+              display_name: resB.data.display_name,
+              photo_url: resB.data.photo_url,
+            },
+          });
+          return;
+        }
+      } catch {
+        // If profile fetch fails, skip overlay and navigate directly
+      }
+
+      // Fallback: navigate directly if overlay data is incomplete
+      router.push(`/match/${matchId}`);
+    }
 
     const channel = client
       .channel("matches-realtime")
@@ -147,8 +213,7 @@ export default function BarPage() {
           filter: `profile_a=eq.${profileId}`,
         },
         (payload) => {
-          fireWingman(payload.new.id);
-          router.push(`/match/${payload.new.id}`);
+          handleMatchDetected(payload.new.id, payload.new.profile_a, payload.new.profile_b);
         }
       )
       .on(
@@ -160,8 +225,7 @@ export default function BarPage() {
           filter: `profile_b=eq.${profileId}`,
         },
         (payload) => {
-          fireWingman(payload.new.id);
-          router.push(`/match/${payload.new.id}`);
+          handleMatchDetected(payload.new.id, payload.new.profile_a, payload.new.profile_b);
         }
       )
       .subscribe();
@@ -170,6 +234,18 @@ export default function BarPage() {
       client.removeChannel(channel);
     };
   }, [router]);
+
+  /**
+   * Handles the "Try Again" button click. Re-invokes loadPatrons without
+   * a full page reload. Tracks whether this is a retry so the error message
+   * can be updated on repeated failures.
+   *
+   * Requirements: 7.1, 7.5
+   */
+  async function handleRetry() {
+    setIsRetryFailure(true);
+    await loadPatrons();
+  }
 
   async function handleLike(toProfileId: string) {
     if (!supabase || !venueId) return;
@@ -194,7 +270,11 @@ export default function BarPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-950 text-white px-4 py-6">
-        <h1 className="text-2xl font-bold mb-6 text-center">Who&apos;s Here</h1>
+        {venueName && myDisplayName && myIntent ? (
+          <BarHeader venueName={venueName} displayName={myDisplayName} intent={myIntent} />
+        ) : (
+          <h1 className="text-2xl font-bold mb-6 text-center">Who&apos;s Here</h1>
+        )}
         <div className="grid gap-4 max-w-md mx-auto">
           {[1, 2, 3].map((i) => (
             <SkeletonCard key={i} />
@@ -207,14 +287,40 @@ export default function BarPage() {
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white px-6">
-        <p className="text-center text-gray-400">{error}</p>
+        <div className="flex flex-col items-center gap-4 text-center">
+          <p className="text-gray-400" role="alert">
+            {isRetryFailure
+              ? "Still unable to load patrons. Please check your connection and try again."
+              : error}
+          </p>
+          <div className="flex flex-col items-center gap-3 mt-2">
+            <button
+              onClick={handleRetry}
+              aria-label="Try Again"
+              className="min-w-[48px] min-h-[48px] px-6 py-3 bg-pink-600 hover:bg-pink-500 active:bg-pink-700 text-white font-medium rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-2 focus:ring-offset-gray-950"
+            >
+              Try Again
+            </button>
+            <Link
+              href="/"
+              aria-label="Go Home"
+              className="min-w-[48px] min-h-[48px] px-6 py-3 bg-gray-800 hover:bg-gray-700 active:bg-gray-900 text-gray-200 font-medium rounded-xl transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 focus:ring-offset-gray-950"
+            >
+              Go Home
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-gray-950 text-white px-4 py-6">
-      <h1 className="text-2xl font-bold mb-6 text-center">Who&apos;s Here</h1>
+      {venueName && myDisplayName && myIntent ? (
+        <BarHeader venueName={venueName} displayName={myDisplayName} intent={myIntent} />
+      ) : (
+        <h1 className="text-2xl font-bold mb-6 text-center">Who&apos;s Here</h1>
+      )}
 
       {patrons.length === 0 ? (
         <p className="text-center text-gray-500">No one with a compatible vibe right now. Hang tight.</p>
@@ -286,6 +392,19 @@ export default function BarPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {matchOverlay && (
+        <MatchOverlay
+          matchId={matchOverlay.matchId}
+          profileA={matchOverlay.profileA}
+          profileB={matchOverlay.profileB}
+          onComplete={() => {
+            const id = matchOverlay.matchId;
+            setMatchOverlay(null);
+            router.push(`/match/${id}`);
+          }}
+        />
       )}
     </div>
   );

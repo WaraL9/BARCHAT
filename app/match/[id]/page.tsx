@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useMatchRealtime } from "./useMatchRealtime";
 import { useChatRealtime } from "./useChatRealtime";
 import { useMatchDrinks } from "./useMatchDrinks";
@@ -304,6 +305,13 @@ export default function MatchPage() {
           <p className="text-white/40 text-sm">
             This match may have been removed or the link is invalid.
           </p>
+          <a
+            href="/bar"
+            className="mt-4 inline-flex items-center justify-center min-w-[48px] min-h-[48px] px-6 py-3 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+            aria-label="Back to Bar"
+          >
+            Back to Bar
+          </a>
         </div>
       </div>
     );
@@ -452,6 +460,19 @@ export default function MatchPage() {
   return (
     <>
       <div className="h-[100dvh] flex flex-col max-w-[390px] mx-auto bg-gray-950 pb-[6rem]">
+        {/* "Back to Bar" link — visible only when match has ended (Req 2.1, 2.2, 4.3, 4.4) */}
+        {matchEnded && (
+          <div className="px-4 pt-3 pb-1">
+            <Link
+              href="/bar"
+              className="inline-flex items-center gap-1 text-sm text-purple-400 hover:text-purple-300 transition-colors min-w-[48px] min-h-[48px] focus:outline-none focus:ring-2 focus:ring-purple-400 rounded"
+              aria-label="Back to Bar"
+            >
+              <span aria-hidden="true">←</span> Back to Bar
+            </Link>
+          </div>
+        )}
+
         {/* Profile Header at top */}
         <ProfileHeader
           profileA={profiles.a!}
