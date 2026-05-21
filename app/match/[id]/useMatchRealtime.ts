@@ -135,7 +135,8 @@ export function useMatchRealtime(matchId: string): UseMatchRealtimeResult {
           });
           setLoading(false);
         }
-      } catch (err) {
+      } catch (_err) {
+        void _err;
         if (!cancelled) {
           setError("Failed to load match data");
           setLoading(false);

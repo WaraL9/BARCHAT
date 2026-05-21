@@ -145,6 +145,7 @@ export default function BarPage() {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mapped: Patron[] = (others || []).map((row: any) => ({
       profile_id: row.profile_id,
       intent: row.intent as Intent,

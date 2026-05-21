@@ -10,11 +10,12 @@ interface MatchOverlayProps {
 }
 
 export default function MatchOverlay({
-  matchId,
+  matchId: _matchId,
   profileA,
   profileB,
   onComplete,
 }: MatchOverlayProps) {
+  void _matchId; // reserved for future use
   const [visible, setVisible] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
