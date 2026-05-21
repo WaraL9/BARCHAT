@@ -181,8 +181,3 @@ Before this ever sees production:
 - **Trust on-chain.** Verified-patron status as a soulbound credential portable across venues.
 - **Drink-sends settle in stablecoin.** So kindness between strangers is verifiable, not just simulated.
 - **Multi-venue.** One bar tonight, every bar in Thonglor next.
-
-## Credits
-
-- Pattern inspired by [**Shon-ma!**](https://linedevth.medium.com/) — LINE HACK 2023 winner.
-- Built solo, on stage, with [Kiro IDE](https://kiro.dev).
